@@ -1,31 +1,41 @@
 services:
   redis:
-    image: redis:latest
-    container_name: redis_container
-#    environment:
-#      - REDIS_PASSWORD=${REDIS_PASSWORD}
-#      - REDIS_USER=${REDIS_USER}
-#      - REDIS_USER_PASSWORD=${REDIS_USER_PASSWORD}
+    image: redis:7-alpine
+    container_name: minicelery-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    # appendonly — Redis пишет журнал операций на диск
     ports:
-      - "6380:6379"
+      - "${REDIS_PORT:-6380}:6379"
     volumes:
       - redis-data:/data
     deploy:
       resources:
         limits:
           cpus: '0.50'
-          memory: 512M
+          memory: 256M
         reservations:
           cpus: '0.25'
-          memory: 256M
+          memory: 128M
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 30s
-      timeout: 10s
+      interval: 5s
+      timeout: 3s
       retries: 5
-    restart: unless-stopped
-    tty: true
-    stdin_open: true
+
+  # Веб-интерфейс для дебага Redis
+  redisinsight:
+    image: redis/redisinsight:latest
+    container_name: minicelery-redisinsight
+    profiles: ["tools"]
+    ports:
+      - "5540:5540"
+    volumes:
+      - redisinsight-data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
 
 volumes:
   redis-data:
+  redisinsight-data:
