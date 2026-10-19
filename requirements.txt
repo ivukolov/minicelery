@@ -1,0 +1,2 @@
+# redis-py: в нём есть асинхронный клиент redis.asyncio
+redis>=5.0
