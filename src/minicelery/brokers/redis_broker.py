@@ -7,15 +7,16 @@ from minicelery.brokers import Broker
 
 class RedisBroker(Broker):
 
-    def __init__(self, host="localhost", port=6379, db=0):
+    def __init__(self, host="localhost", port=6379, db=0, decode_responses=True):
         self._client = None
         self.host = host
         self.port = port
         self.db = db
+        self.decode_responses = decode_responses
 
     async def connect(self) -> Redis:
         if self._client is None:
-            self._client = Redis(host=self.host, port=self.port, db=self.db)
+            self._client = Redis(host=self.host, port=self.port, db=self.db, decode_responses=self.decode_responses)
         # Check if the connection is successful
         await self._client.ping()
         return self._client
