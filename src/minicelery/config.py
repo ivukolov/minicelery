@@ -12,6 +12,7 @@ class Settings(BaseSettings):
         env_prefix="MINICELERY_",
     )
     #concurrency: int = Field(4, ge=1)
+    queue: str = "minicelery:queue:default:1"
 
 
 
