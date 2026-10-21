@@ -1,6 +1,8 @@
 from abc import ABC
 from typing import Self
 
+from minicelery.message import TaskMessage
+
 
 class Broker(ABC):
     """Broker Abstract Base Class"""
@@ -12,7 +14,7 @@ class Broker(ABC):
     async def close(self) -> None:
         """Close the connection"""
 
-    async def publish(self, message: str) -> None:
+    async def publish(self, message: TaskMessage) -> None:
         """Publish a message"""
 
     async def __aenter__(self) -> Self:
