@@ -1,4 +1,3 @@
-from functools import lru_cache
 from pathlib import Path
 
 from pydantic import Field
@@ -11,6 +10,11 @@ class Settings(BaseSettings):
         env_file=BASE_DIR / ".env",
         env_prefix="MINICELERY_",
     )
+    debug: bool = True
+    log_level: str = "INFO"
+    log_file: Path | None = None #BASE_DIR / "logs" / "minicelery.log" # None - only console
+    log_max_bytes: int = 10 * 1024 * 1024
+    log_backup_count: int = 5
     #concurrency: int = Field(4, ge=1)
     queue: str = "minicelery:queue:default:1"
 
