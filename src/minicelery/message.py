@@ -31,7 +31,7 @@ class TaskMessage(BaseModel):
 
     id: str = Field(default_factory=_new_id)
     task: str
-    queue: str = settings.queue
+    queue: str = "default"
     attempt: int = 0
     created_at: datetime = Field(default_factory=_now)
     args: list[Any] = Field(default_factory=list)
