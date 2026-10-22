@@ -1,5 +1,6 @@
 from typing import Self, Sequence
 
+from pydantic import ValidationError
 from redis import ResponseError
 from redis.asyncio import Redis
 
@@ -63,6 +64,12 @@ class RedisBroker(Broker):
                 raise
         self._groups_ready.add(key)
 
+    def _parse(self, queue: str, entry_id: str, fields: dict) -> Delivery | None:
+        try:
+            message = TaskMessage.loads(fields["data"])
+        except (KeyError, ValidationError) as exc:
+            print(exc)
+
     async def consume(
             self,
             queues: Sequence[str],
@@ -76,15 +83,18 @@ class RedisBroker(Broker):
         # create groups
         for key in keys:
             await self._create_group(key)
-        response = await self.client.xreadgroup(  # redis-py types this reply loosely
+        response = await self.client.xreadgroup(
             self._group,
             consumer,
             streams=dict.fromkeys(keys, ">"),
             count=max_messages,
-            block=max(1, int(timeout * 1000)),  # BLOCK 0 would mean "forever"
+            block=max(1, int(timeout * 1000)),
         )
-        print(response)
-
+        deliverys: list[Delivery] = []
+        for stream, entries in response or []:
+            key = stream
+            for entry_id, fields in entries:
+                delivery = self._parse(key, entry_id, fields)
 
 
 
