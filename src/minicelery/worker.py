@@ -6,8 +6,8 @@ from minicelery import TaskQueue
 
 class Worker:
 
-    def __init__(self, name, app: TaskQueue,  queue: str = "default", poll_timeout: int = 10):
-        self.name: str = name or f"{socket.gethostname()}-{os.getpid()}"
+    def __init__(self, app: TaskQueue, name: str | None = None, queue: str = "default", poll_timeout: int = 10):
+        self.name = name or f"{socket.gethostname()}-{os.getpid()}"
         self.app = app
         self.queue = queue
         self.poll_timeout = poll_timeout
