@@ -13,14 +13,11 @@ class TaskQueue:
         self.name = 'tasks'
         self._connected = False
 
-    def task(self, max_retries=1):
+    def task(self, max_retries=0):
         def decorator(func):
-            if not inspect.iscoroutinefunction(func):
-                # Add support for synchronous functions
-                raise TypeError(f"{func.__name__}: only coroutine functions are allowed")
-            name = f'{self.name}.{func.__module__}.{func.__name__}'
-            task = Task(self, func, name, max_retries)
-            self.tasks[name] = task
+            task_name = f'{self.name}.{func.__module__}.{func.__name__}'
+            task = Task(self, func, task_name, max_retries)
+            self.tasks[task_name] = task
             return task
         return decorator
 
