@@ -1,7 +1,14 @@
 from abc import ABC
-from typing import Self
+from dataclasses import dataclass
+from typing import Self, Sequence
 
 from minicelery.message import TaskMessage
+
+@dataclass(frozen=True)
+class Delivery:
+    message: TaskMessage
+    queue: str # Task name
+    receipt: str # Task number
 
 
 class Broker(ABC):
@@ -16,6 +23,15 @@ class Broker(ABC):
 
     async def publish(self, message: TaskMessage) -> None:
         """Publish a message"""
+
+    async def consume(
+            self,
+            queues: Sequence[str],
+            consumer: str,
+            max_messages: int,
+            timeout: float,
+    ) -> list[Delivery]:
+        """Consume messages"""
 
     async def __aenter__(self) -> Self:
         """Connect to the broker"""
