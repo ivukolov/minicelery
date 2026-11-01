@@ -28,9 +28,10 @@ class TaskQueue:
 
     async def close(self) -> None:
         if self._connected:
-            await self.broker.close()
+            await self.broker.disconnect()
             self._connected = False
 
     async def send(self, message: TaskMessage) -> None:
         await self.connect()
         await self.broker.publish(message=message)
+
