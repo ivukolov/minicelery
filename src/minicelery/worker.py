@@ -23,5 +23,7 @@ class Worker:
             deliveries = await self.app.broker.consume(
                 [self.queue], self.name, 1, self.poll_timeout
             )
-            print(deliveries)
-
+            for delivery in deliveries:
+                task = self.app.tasks.get(delivery.message.task)
+                args, kwargs = delivery.message.args, delivery.message.kwargs
+                await task.run(*args, **kwargs)
