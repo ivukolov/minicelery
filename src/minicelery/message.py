@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Self
+from enum import StrEnum, auto
 
 from pydantic import BaseModel, Field
 
@@ -17,7 +18,23 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-class TaskMessage(BaseModel):
+
+class Reason(StrEnum):
+    parse_error = auto()
+
+
+class BaseMessage(BaseModel):
+
+    def dumps(self) -> bytes:
+        return self.model_dump_json().encode()
+
+    @classmethod
+    def loads(cls, raw: bytes | str) -> Self:
+        return cls.model_validate_json(raw)
+
+
+
+class TaskMessage(BaseMessage):
     """What travels through the broker.
     Attributes:
         id: str id of the task
@@ -33,13 +50,17 @@ class TaskMessage(BaseModel):
     task: str
     queue: str = "default"
     attempt: int = 0
-    created_at: datetime = Field(default_factory=_now)
     args: list[Any] = Field(default_factory=list)
     kwargs: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=_now)
 
-    def dumps(self) -> bytes:
-        return self.model_dump_json().encode()
 
-    @classmethod
-    def loads(cls, raw: bytes | str) -> TaskMessage:
-        return cls.model_validate_json(raw)
+class DeadLetterMessage(BaseMessage):
+    from_queue: str
+    raw_data: str
+    reason: Reason
+    error: str
+    attempt: int | None = None
+    worker: str
+    receipt_id: str
+    failed_at: datetime = Field(default_factory=_now)
