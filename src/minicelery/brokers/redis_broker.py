@@ -3,11 +3,14 @@ from typing import Self, Sequence
 from pydantic import ValidationError
 from redis import ResponseError
 from redis.asyncio import Redis
+import logging
 
 from minicelery.brokers import Broker
 from minicelery.brokers.base import Delivery
 from minicelery.config import settings
 from minicelery.message import TaskMessage
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -64,11 +67,15 @@ class RedisBroker(Broker):
                 raise
         self._groups_ready.add(key)
 
-    def _parse(self, queue: str, entry_id: str, fields: dict) -> Delivery | None:
+    def _parse(self, fields: dict) -> TaskMessage | None:
         try:
             message = TaskMessage.loads(fields["data"])
+            print(message)
         except (KeyError, ValidationError) as exc:
-            print(exc)
+            #ADD processing not valid tasks
+            logger.error(str(exc))
+            return None
+        return message
 
     async def consume(
             self,
@@ -76,7 +83,7 @@ class RedisBroker(Broker):
             consumer: str,
             max_messages: int,
             timeout: float,
-    ):
+    ) -> list[Delivery]:
         """Consume messages"""
         #Make group keys
         keys = [self.key(queue) for queue in queues]
@@ -90,11 +97,15 @@ class RedisBroker(Broker):
             count=max_messages,
             block=max(1, int(timeout * 1000)),
         )
-        deliverys: list[Delivery] = []
+        deliveries: list[Delivery] = []
         for stream, entries in response or []:
             key = stream
             for entry_id, fields in entries:
-                delivery = self._parse(key, entry_id, fields)
+                message_obj = self._parse(fields)
+                if message_obj:
+                    deliveries.append(Delivery(message_obj, key, entry_id))
+        return deliveries
+                
 
 
 
