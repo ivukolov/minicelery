@@ -1,7 +1,10 @@
+import logging
 import os
 import socket
 
 from minicelery import TaskQueue
+
+logger = logging.getLogger()
 
 
 class Worker:
@@ -25,5 +28,12 @@ class Worker:
             )
             for delivery in deliveries:
                 task = self.app.tasks.get(delivery.message.task)
+                logger.debug(task)
                 args, kwargs = delivery.message.args, delivery.message.kwargs
-                await task.run(*args, **kwargs)
+                if task:
+                    try:
+                        await task.run(*args, **kwargs)
+                        await self.app.broker.ack(delivery)
+                        logger.debug('ack')
+                    except Exception as e:
+                        logger.error(e, exc_info=True)
