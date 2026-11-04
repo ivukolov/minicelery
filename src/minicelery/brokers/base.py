@@ -2,7 +2,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Self, Sequence
 
-from minicelery.message import TaskMessage
+from minicelery.message import TaskMessage, DeadTaskMessage
+
 
 @dataclass(frozen=True)
 class Delivery:
@@ -37,7 +38,7 @@ class Broker(ABC):
         """Consume messages"""
 
     @abstractmethod
-    def dead_letter(self, delivery, reason, error):
+    async def dead_letter(self, message: DeadTaskMessage):
         """Dead letter error"""
 
     @abstractmethod
