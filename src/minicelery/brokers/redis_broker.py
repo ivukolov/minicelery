@@ -1,3 +1,4 @@
+import json
 from typing import Self, Sequence
 
 from pydantic import ValidationError
@@ -5,10 +6,13 @@ from redis import ResponseError
 from redis.asyncio import Redis
 import logging
 
+from redis.asyncio.client import Pipeline
+
 from minicelery.brokers import Broker
 from minicelery.brokers.base import Delivery
 from minicelery.config import settings
-from minicelery.message import TaskMessage
+from minicelery.errors import MalformedMessageError
+from minicelery.message import TaskMessage, DeadTaskMessage, Reason, BaseMessage
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +25,6 @@ class RedisBroker(Broker):
             host: str = "localhost",
             port: int = 6379,
             db: int = 0,
-            decode_responses: bool = True,
             prefix: str = "minicelery",
             group = "workers",
             socket_timeout: float = 20.0,
@@ -31,10 +34,10 @@ class RedisBroker(Broker):
         self.host = host
         self.port = port
         self.db = db
-        self.decode_responses = decode_responses
         self.socket_timeout = socket_timeout
+        self._decode_responses = True
         self._prefix = prefix
-        self._dead_letter_prefix: str = 'dead_letter'
+        self._data_field = 'data'
         self._group = group
         self._groups_ready: set[str] = set()
         self._delete_on_ack = delete_on_ack
@@ -47,6 +50,9 @@ class RedisBroker(Broker):
 
     def key(self, queue: str) -> str:
         return f"{self._prefix}:queue:{queue}"
+
+    def dead_letter_key(self, queue: str) -> str:
+        return f"{self._prefix}:dead_letters:{queue}"
 
     @property
     def client(self) -> Redis:
@@ -62,7 +68,7 @@ class RedisBroker(Broker):
                 host=self.host,
                 port=self.port,
                 db=self.db,
-                decode_responses=self.decode_responses,
+                decode_responses=self._decode_responses,
                 socket_timeout=self.socket_timeout,
             )
         try:
@@ -77,10 +83,23 @@ class RedisBroker(Broker):
             await self.client.aclose()
 
     async def publish(self, message: TaskMessage) -> None:
-        await self.client.xadd(self.key(message.queue), {"data": message.dumps()})
+        await self._publish(self.client, self.key(message.queue), message.dumps())
 
-    async def dead_letter(self, delivery, reason, error):
-        await self.client.xadd(self._dead_letter_prefix, {"delivery": delivery, "reason": reason, "error": error})
+    async def _publish(self, client, stream_name: str, message: bytes) -> None:
+        await client.xadd(
+            stream_name, {self._data_field: message}
+        )
+
+    async def dead_letter(self, message: DeadTaskMessage) -> None:
+        dead_key = self.dead_letter_key(message.from_queue)
+        source_key = self.key(message.from_queue)
+        async with self.client.pipeline(transaction=True) as pipe:
+            await self._publish(pipe, dead_key, message.dumps())
+            ack_at = len(pipe)
+            self._ack(pipe, source_key, message.receipt_id)
+            result = await pipe.execute()
+        self._check_ack(result[ack_at], source_key, message.receipt_id)
+
 
     async def _create_group(self, key: str) -> None:
         if key in self._groups_ready:
@@ -92,31 +111,36 @@ class RedisBroker(Broker):
                 raise
         self._groups_ready.add(key)
 
+    def _ack(self, pipe: Pipeline, stream_key, receipt) -> Pipeline:
+        pipe.xack(stream_key, self.group, receipt)
+        if self._delete_on_ack:
+            pipe.xdel(stream_key, receipt)
+        return pipe
+
+    def _check_ack(self, acked: int, queue: str, receipt: str) -> None:
+        if not acked:
+            logger.error("XACK missed: queue=%s receipt=%s", queue, receipt)
+
     async def ack(self, delivery: Delivery) -> None:
         async with self.client.pipeline(transaction=True) as pipe:
-            pipe.xack(delivery.queue, self.group, delivery.receipt)
-            if self._delete_on_ack:
-                pipe.xdel(delivery.queue, delivery.receipt)
+            stream_key = self.key(delivery.queue)
+            pipe = self._ack(pipe, stream_key, delivery.receipt)
             result = await pipe.execute()
-            logger.debug(
-                "XACK & XDEL: result=%s, id=%s", result, delivery.message.id)
-            if not result[0]:
-                logger.error(
-                    "XACK missed: queue=%s receipt=%s, id=%s",
-                    delivery.queue, delivery.receipt, delivery.message.id
-                )
+            self._check_ack(result[0], stream_key, delivery.receipt)
 
 
-    async def _parse(self, fields: dict) -> TaskMessage | None:
-        data = fields.get("data")
+    def _parse(self, fields: dict) -> TaskMessage:
+        data = fields.get(self._data_field)
+        if not data:
+            raise MalformedMessageError(
+                f"Field '{self._data_field}' is missing or empty, got keys: {list(fields)}"
+            )
         try:
             message = TaskMessage.loads(data)
-            logger.debug(f"Message: {message}")
-        except (KeyError, ValidationError) as exc:
-            await self.dead_letter(fields, reason='ValidationError', error=str(exc))
-            #ADD processing not valid tasks
-            logger.error(str(exc))
-            return None
+            logger.debug("Message: %s", message)
+        except ValidationError as e:
+            errors = e.errors(include_input=False, include_url=False, include_context=False)
+            raise MalformedMessageError(f"Validation error: {errors}") from e
         return message
 
     async def consume(
@@ -128,7 +152,7 @@ class RedisBroker(Broker):
     ) -> list[Delivery]:
         """Consume messages"""
         #Make group keys
-        keys = [self.key(queue) for queue in queues]
+        keys = {self.key(queue): queue for queue in queues}
         # create groups
         for key in keys:
             await self._create_group(key)
@@ -141,11 +165,22 @@ class RedisBroker(Broker):
         )
         deliveries: list[Delivery] = []
         for stream, entries in response or []:
-            key = stream
-            for entry_id, fields in entries:
-                message_obj = await self._parse(fields)
-                if message_obj:
-                    deliveries.append(Delivery(message_obj, key, entry_id))
+            queue = keys[stream]
+            for receipt, fields in entries:
+                try:
+                    message_obj = self._parse(fields)
+                except MalformedMessageError as exc:
+                    dead_task_msg = DeadTaskMessage(
+                        from_queue=queue,
+                        raw_data=fields,
+                        reason=Reason.parse_error,
+                        error=str(exc),
+                        worker=consumer,
+                        receipt_id=receipt,
+                    )
+                    await self.dead_letter(dead_task_msg)
+                else:
+                    deliveries.append(Delivery(message_obj, queue, receipt))
         return deliveries
                 
 
